@@ -52,7 +52,10 @@ function parseElementElement(inElement) {
   var script = inElement.querySelector('script,scripts');
   if (script) {
     // execute user script in 'inElement' context
-    executeComponentScript(script.textContent, inElement, options.name);
+    executeComponentScript(
+      {type: script.type, code: script.textContent}, 
+      inElement, options.name
+    );
   };
   // register our new element
   var ctor = document.register(options.name, options);
@@ -91,15 +94,70 @@ function executeComponentScript(inScript, inContext, inName) {
     var name = match[1];
     url += name != inName ? ':' + inName : '';
   }
-  // compose script
-  var code = "__componentScript('"
-    + inName
-    + "', function(){"
-    + inScript
-    + "});"
-    + "\n//@ sourceURL=" + url + "\n"
-  ;
   // inject script
+
+  var code = "";
+
+  switch (inScript.type) {
+
+    case "text/coffeescript":
+      if (typeof CoffeeScript !== "undefined" && CoffeeScript !== null) {
+        try {
+          var compiled = CoffeeScript.compile(
+            inScript.code,
+            { bare: true, sourceMap: true }
+          );
+        } catch (e) {
+          if (e.location) {
+            if (e.location.first_line && e.location.last_line) {
+              var lines = inScript.code.split(/\n/),
+                  err_lines = [];
+
+              for (var i = e.location.first_line; i <= e.location.last_line; i++)  {
+                err_lines.push(lines[i]);
+              }
+              console.error(e.constructor.name, "in", inName, ":" , e.message, "on lines\n", err_lines.join("\n"));
+              return;
+            }
+          } else {
+            console.error(e.constructor.name, "in", inName, ":" , e.message, "\n", inScript.code);
+          }
+          return;
+        }
+
+        var source_map = JSON.parse(compiled.v3SourceMap);
+        
+        // Adding Source Name & Code to Source Map
+        source_map.sources = [ context.attributes.name.value + ".coffee" ];
+        source_map.sourcesContent = [ inScript.code ];
+        
+        compiled.v3SourceMap = JSON.stringify(source_map);
+
+        code = "__componentScript('"
+          + inName
+          + "', function(){"
+          + compiled.js
+          + "});"
+          +  "\n//@ sourceMappingURL=data:application/json;base64,"
+           + (btoa(unescape(encodeURIComponent(compiled.v3SourceMap)))) 
+          + "\n//@ sourceURL="+ url + "\n"
+        ;
+        break;
+      } else {
+        throw new Error("no CoffeeScript inline compiler found");
+      }
+
+    case "text/javascript":
+    default:
+      // compose script
+      code = "__componentScript('"
+        + inName
+        + "', function(){"
+        + inScript.code
+        + "});"
+        + "\n//@ sourceURL=" + url + "\n"
+      ;
+  }
   eval(code);
 }
 
